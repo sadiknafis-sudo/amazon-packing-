@@ -130,6 +130,24 @@ with the tablet camera.
 On the pack screen a small tag says where the photo came from (for example "Amazon listing photo").
 Listing photos load from the marketplace's image servers, so the tablets need internet access.
 
+## Accounts
+
+Each order's account is shown in big coloured letters next to the Ref on the pack screen, and in the
+Summary (with progress per account). The accounts come from the Ref letters:
+
+| Ref | Account |
+|---|---|
+| EB | eBay |
+| CN | CDI Canada |
+| C | USA Amazon |
+| M | Mehmet USA Amazon |
+| WE | Weston USA Amazon |
+| P | Purenest Amazon |
+| SP | Shopify CDI |
+
+Change names and colours, or add new letters, in **Setup → Accounts**. Letters without a name show as, for example,
+"WS (no account name)".
+
 ## Dividing orders between the two packers
 
 Setup → *How to divide orders*:

@@ -91,6 +91,17 @@ const packerName = (i) => (i == null ? '—' : S.packers[i] || `Packer ${i + 1}`
 const isOpen = (o) => o.lines.some((l) => !l.status);
 const img = (key) => S.images[key];
 
+const refPrefix = (ref) => (String(ref).match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
+function account(ref) {
+  const prefix = refPrefix(ref);
+  const a = S.accounts?.[prefix];
+  return { prefix, name: a?.name || '', color: a?.color || '#475569' };
+}
+function accountBadge(ref, big = false) {
+  const a = account(ref);
+  return `<span class="acct ${big ? 'big' : ''}" style="background:${esc(a.color)}">${esc(a.name || `${a.prefix} (no account name)`)}</span>`;
+}
+
 function orderStatus(o) {
   if (o.lines.every((l) => l.status === 'packed')) return 'packed';
   if (!isOpen(o)) return 'missing';
@@ -286,7 +297,7 @@ function viewPack() {
     <div class="pack-top">
       <button class="who" data-switch>👤 ${esc(packerName(me))} ▾</button>
       ${order.assigned != null && order.assigned !== me ? `<span class="status-tag working">Helping ${esc(packerName(order.assigned))}</span>` : ''}
-      <div><div class="order-ref">${esc(order.ref)}</div><div class="order-to">${esc(order.recipient)}</div></div>
+      <div><div class="row" style="gap:10px"><span class="order-ref">${esc(order.ref)}</span>${accountBadge(order.ref, true)}</div><div class="order-to">${esc(order.recipient)}</div></div>
       ${order.lines.length > 1 ? `<div><div class="muted" style="font-size:14px">Item ${idx + 1} of ${order.lines.length}</div><div class="dots">${order.lines.map((l, i) => `<span class="dot ${l.status || (i === idx ? 'cur' : '')}"></span>`).join('')}</div></div>` : ''}
       <div class="spacer"></div>
       <div class="progress"><div class="muted" style="font-size:14px">${st.done + st.waiting} / ${st.orders} orders done</div>${bar(st.done, st.waiting, st.orders)}</div>
@@ -431,7 +442,7 @@ function shoppingText() {
 function viewSummary() {
   if (!day().orders.length && !totals().length) return noData();
   const st = packStats();
-  const orders = day().orders.filter((o) => ui.orderFilter === 'all' || orderStatus(o) === ui.orderFilter);
+  const orders = day().orders.filter((o) => (ui.orderFilter === 'all' || orderStatus(o) === ui.orderFilter) && (!ui.acctFilter || refPrefix(o.ref) === ui.acctFilter));
   const chip = (f, label) => `<button class="chip ${ui.orderFilter === f ? 'on' : ''}" data-ofilter="${f}">${label}</button>`;
   const label = { packed: 'PACKED', missing: 'MISSING ITEM', working: 'PACKING', open: 'NOT STARTED' };
   const t = totals();
@@ -455,12 +466,19 @@ function viewSummary() {
       ${S.split.mode !== 'shared' ? `<div>${day().orders.filter((o) => o.assigned === i).length} orders assigned · ${day().orders.filter((o) => o.assigned === i && isOpen(o)).length} left</div>` : ''}
       <div class="muted" style="font-size:14px">${(() => { const o = day().orders.find((x) => x.claimedBy === i && isOpen(x)); return o ? `Now on ${esc(o.ref)}` : 'Idle'; })()}</div></div>`).join('')}</div>
     <p class="muted">Orders are divided: <b>${splitLabel()}</b> (change in Setup).</p>
-    <h2>Orders</h2>
+    <h2>By account</h2>
+    <div class="stats">${prefixCounts().map(([p, n]) => {
+      const list = day().orders.filter((o) => refPrefix(o.ref) === p);
+      const done = list.filter((o) => !isOpen(o)).length;
+      return `<button class="stat acct-stat ${ui.acctFilter === p ? 'on' : ''}" data-acct="${esc(p)}" style="border-left:8px solid ${esc(account(p).color)}">
+        <div style="font-weight:800">${esc(account(p).name || p)}</div><div class="muted" style="font-size:14px">${esc(p)} · ${done} / ${n} orders done</div>${bar(list.filter((o) => orderStatus(o) === 'packed').length, list.filter((o) => orderStatus(o) === 'missing').length, n)}</button>`;
+    }).join('')}</div>
+    <h2>Orders ${ui.acctFilter ? `· ${esc(account(ui.acctFilter).name || ui.acctFilter)} <button class="btn small" data-acct="">Show all accounts</button>` : ''}</h2>
     <div class="chips">${chip('all', 'All')}${chip('open', 'Not started')}${chip('working', 'Packing')}${chip('missing', 'Missing item')}${chip('packed', 'Packed')}</div>
-    <table><thead><tr><th>Ref</th><th>Recipient</th><th>Items</th><th>Status</th></tr></thead><tbody>
-      ${orders.map((o) => `<tr class="click" data-order="${esc(o.ref)}"><td><b>${esc(o.ref)}</b></td><td>${esc(o.recipient)}</td>
+    <table><thead><tr><th>Ref</th><th>Account</th><th>Recipient</th><th>Items</th><th>Status</th></tr></thead><tbody>
+      ${orders.map((o) => `<tr class="click" data-order="${esc(o.ref)}"><td><b>${esc(o.ref)}</b></td><td>${accountBadge(o.ref)}</td><td>${esc(o.recipient)}</td>
         <td>${o.lines.map((l) => `<div>${l.status ? `<span class="status-tag ${l.status}">${l.status === 'packed' ? '✓' : '✗'}</span> ` : ''}${l.qty} × ${esc(l.name)}</div>`).join('')}</td>
-        <td><span class="status-tag ${orderStatus(o)}">${label[orderStatus(o)]}</span>${o.claimedBy != null && isOpen(o) ? `<div class="muted" style="font-size:13px">${esc(packerName(o.claimedBy))}</div>` : ''}</td></tr>`).join('') || `<tr><td colspan="4" class="muted">No orders.</td></tr>`}
+        <td><span class="status-tag ${orderStatus(o)}">${label[orderStatus(o)]}</span>${o.claimedBy != null && isOpen(o) ? `<div class="muted" style="font-size:13px">${esc(packerName(o.claimedBy))}</div>` : ''}</td></tr>`).join('') || `<tr><td colspan="5" class="muted">No orders.</td></tr>`}
     </tbody></table>
   </div>`;
 }
@@ -469,7 +487,7 @@ function orderDialog(ref) {
   const o = day().orders.find((x) => x.ref === ref);
   if (!o) return;
   const hasMissing = o.lines.some((l) => l.status === 'missing');
-  openModal(`<div class="dlg"><h3>Order ${esc(o.ref)} — ${esc(o.recipient)}</h3>
+  openModal(`<div class="dlg"><h3>Order ${esc(o.ref)} — ${esc(o.recipient)}</h3><div>${accountBadge(o.ref, true)}</div>
     <div class="list">${o.lines.map((l) => `<div class="item"><div class="thumb">${img(l.key) ? `<img src="${esc(img(l.key))}" alt="">` : '📦'}</div>
       <div class="grow"><div class="name">${esc(l.name)}</div><div class="muted">× ${l.qty}${l.status ? ` · ${l.status} by ${esc(packerName(l.by))}` : ''}</div></div></div>`).join('')}</div>
     <div class="btns">
@@ -519,6 +537,8 @@ function viewSetup() {
       <p>This device is: <b>${ui.packer == null ? 'not set' : esc(packerName(ui.packer))}</b> <button class="btn small" data-switch>Change</button></p>
     </div>
 
+    ${accountsSection()}
+
     ${splitSection()}
 
     ${photoReportSection()}
@@ -542,6 +562,25 @@ function backOfficeCard() {
       <a href="/upload.html" target="_blank"><b>${esc(location.origin)}/upload.html</b></a>. The app then gets each product's photo from its Amazon / Walmart / eBay listing.</p>
     <p>${jobs.pending ? `⏳ Getting ${jobs.pending} photo(s) from listing links…` : '✅ No photos waiting.'}
       ${failed.length ? ` · <span style="color:var(--red);font-weight:700">${failed.length} couldn't be fetched</span> (see the upload page)` : ''}</p>
+  </div>`;
+}
+
+function accountsSection() {
+  const prefixes = new Set([...Object.keys(S.accounts || {}), ...prefixCounts().map(([p]) => p)]);
+  const counts = Object.fromEntries(prefixCounts());
+  return `<div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0">Accounts (by Ref letters)</h2>
+    <p class="muted" style="margin-top:0">Each order shows its account in big coloured letters on the pack screen. Edit a name or colour and tap Save. Clear the name to remove it.</p>
+    <table><thead><tr><th>Ref letters</th><th>Account name</th><th>Colour</th><th>Today</th><th></th></tr></thead><tbody>
+      ${[...prefixes].sort().map((p) => { const a = S.accounts?.[p] || { name: '', color: '#475569' }; return `<tr>
+        <td><b>${esc(p)}</b></td>
+        <td><input class="search" style="min-width:160px" data-acct-name="${esc(p)}" value="${esc(a.name)}" placeholder="Account name"></td>
+        <td><input type="color" data-acct-color="${esc(p)}" value="${esc(a.color)}"></td>
+        <td>${counts[p] ? `${counts[p]} orders` : '<span class="muted">—</span>'}</td>
+        <td><button class="btn small" data-acct-save="${esc(p)}">Save</button></td></tr>`; }).join('')}
+      <tr><td><input class="search" style="width:70px" id="newPrefix" placeholder="e.g. WS"></td><td><input class="search" id="newAcctName" placeholder="New account name"></td>
+        <td><input type="color" id="newAcctColor" value="#475569"></td><td></td><td><button class="btn small primary" data-acct-add>Add</button></td></tr>
+    </tbody></table>
   </div>`;
 }
 
@@ -573,8 +612,8 @@ function splitSection() {
   if (mode === 'prefix') {
     const pref = S.split.prefixes;
     detail = `<p class="muted">Tap who packs each type of order. "Either" = whoever is free.</p>
-      <table><thead><tr><th>Ref starts with</th><th>Orders</th><th>Packed by</th></tr></thead><tbody>
-      ${prefixCounts().map(([p, n]) => `<tr><td><b>${esc(p)}</b> <span class="muted">e.g. ${esc(orders.find((o) => o.ref.toUpperCase().startsWith(p) && /^\d/.test(o.ref.slice(p.length)))?.ref || '')}</span></td><td>${n}</td><td><div class="row">
+      <table><thead><tr><th>Ref starts with / account</th><th>Orders</th><th>Packed by</th></tr></thead><tbody>
+      ${prefixCounts().map(([p, n]) => `<tr><td><b>${esc(p)}</b> ${accountBadge(p)} <span class="muted">e.g. ${esc(orders.find((o) => o.ref.toUpperCase().startsWith(p) && /^\d/.test(o.ref.slice(p.length)))?.ref || '')}</span></td><td>${n}</td><td><div class="row">
         ${[0, 1, null].map((to) => `<button class="chip ${pref[p] === to || (to === null && pref[p] == null) ? 'on' : ''}" data-prefix="${esc(p)}" data-to="${to}">${to === null ? 'Either' : esc(packerName(to))}</button>`).join('')}
       </div></td></tr>`).join('') || '<tr><td colspan="3" class="muted">Import a packing sheet first.</td></tr>'}
       </tbody></table>
@@ -692,7 +731,7 @@ function photoDialog(key, name) {
       <input class="search full" id="listingUrl" placeholder="Paste the Amazon / Walmart / eBay listing link">
       <button class="btn blue full" data-dlg="listing">Use the listing's photo</button>
       <div class="full row" style="gap:6px">Find the listing:
-        ${[['Amazon', 'https://www.amazon.ca/s?k='], ['Walmart', 'https://www.walmart.ca/search?q='], ['eBay', 'https://www.ebay.ca/sch/i.html?_nkw='], ['Google Images', 'https://www.google.com/search?tbm=isch&q=']]
+        ${[['Amazon.ca', 'https://www.amazon.ca/s?k='], ['Amazon.com', 'https://www.amazon.com/s?k='], ['Walmart', 'https://www.walmart.ca/search?q='], ['eBay', 'https://www.ebay.ca/sch/i.html?_nkw='], ['Google Images', 'https://www.google.com/search?tbm=isch&q=']]
           .map(([n, u]) => `<a class="btn small" style="text-decoration:none" target="_blank" rel="noopener" href="${u}${encodeURIComponent(name)}">🔎 ${n}</a>`).join('')}
       </div>
       <input class="search full" id="imgUrl" placeholder="…or paste an image address (right-click / long-press the photo → Copy image address)">
@@ -799,10 +838,25 @@ function go(view) {
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('a')) return; // links (e.g. "open listing") never count as a tap on the photo
-  const t = e.target.closest('[data-help],[data-split],[data-prefix],[data-accept],[data-skip],[data-clearcatalog],[data-view],[data-go],[data-packer],[data-switch],[data-photo],[data-mark],[data-act],[data-stock],[data-stock-undo],[data-need],[data-walk],[data-sfilter],[data-ofilter],[data-pfilter],[data-order],[data-copy],[data-share],[data-newday],[data-savepackers]');
+  const t = e.target.closest('[data-acct],[data-acct-save],[data-acct-add],[data-help],[data-split],[data-prefix],[data-accept],[data-skip],[data-clearcatalog],[data-view],[data-go],[data-packer],[data-switch],[data-photo],[data-mark],[data-act],[data-stock],[data-stock-undo],[data-need],[data-walk],[data-sfilter],[data-ofilter],[data-pfilter],[data-order],[data-copy],[data-share],[data-newday],[data-savepackers]');
   if (!t || t.closest('#modal')) return;
   const d = t.dataset;
 
+  if (d.acct !== undefined) {
+    ui.acctFilter = d.acct || null;
+    return render();
+  }
+  if (d.acctSave) {
+    const p = d.acctSave;
+    act({ type: 'account', prefix: p, name: $(`[data-acct-name="${p}"]`).value, color: $(`[data-acct-color="${p}"]`).value });
+    return toast('Account saved');
+  }
+  if (t.hasAttribute('data-acct-add')) {
+    const prefix = $('#newPrefix').value.trim();
+    if (!prefix || !$('#newAcctName').value.trim()) return toast('Type the Ref letters and a name');
+    act({ type: 'account', prefix, name: $('#newAcctName').value, color: $('#newAcctColor').value });
+    return toast('Account added');
+  }
   if (t.hasAttribute('data-help')) {
     ui.helping = true;
     return render();

@@ -121,3 +121,15 @@ test('listing reports set photos for exact name matches only', () => {
   assert.equal(s.state.images[itemKey('KD Shaker 500g')], undefined);
   assert.equal(s.suggestions()[0].candidates[0].image, 'https://x/kd.jpg');
 });
+
+test('accounts: defaults by Ref letters, editable, edits survive a restart', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'packing-'));
+  const s = new Store(dir);
+  assert.equal(s.state.accounts.M.name, 'Mehmet USA Amazon');
+  assert.equal(s.state.accounts.EB.name, 'eBay');
+  s.act({ type: 'account', prefix: 'ws', name: 'Walmart Store', color: '#334155' });
+  s.act({ type: 'account', prefix: 'P', name: 'PureNest', color: '#a16207' });
+  const again = new Store(dir);
+  assert.deepEqual(again.state.accounts.WS, { name: 'Walmart Store', color: '#334155' });
+  assert.equal(again.state.accounts.P.name, 'PureNest');
+});
