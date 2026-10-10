@@ -21,7 +21,13 @@ const ui = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-function connect() {
+async function connect() {
+  try {
+    const r = await fetch('/api/state');
+    if (r.status === 401) return pinScreen();
+  } catch {
+    // server not reachable yet: EventSource keeps retrying
+  }
   const es = new EventSource('/api/events');
   es.onopen = () => $('#conn').classList.add('ok');
   es.onmessage = (e) => {
@@ -29,6 +35,18 @@ function connect() {
     render();
   };
   es.onerror = () => $('#conn').classList.remove('ok'); // EventSource reconnects on its own
+}
+
+function pinScreen(msg = '') {
+  $('#view').innerHTML = `<div class="page"><div class="card" style="max-width:420px;margin:40px auto">
+    <h1>Enter PIN</h1><form id="pinForm" class="row"><input class="search" id="pin" type="password" inputmode="numeric" autofocus>
+    <button class="btn primary">Open</button></form><p style="color:var(--red)">${esc(msg)}</p></div></div>`;
+  $('#pinForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await fetch('/api/login', { method: 'POST', body: JSON.stringify({ pin: $('#pin').value }) });
+    if (r.ok) connect();
+    else pinScreen('Wrong PIN');
+  };
 }
 
 async function act(action) {
@@ -172,7 +190,18 @@ function picHTML(key, name, { camera = true, showName = true } = {}) {
 function sourceTag(key) {
   const m = S.imageMeta?.[key];
   if (!img(key) || !m || !m.source || m.source === 'Photo') return '';
-  return `<span class="src-tag" title="${esc(m.title)}">${esc(m.source)} listing photo</span>`;
+  const label = m.source === 'Back office' ? 'Photo from back office' : m.source === 'Listing' ? 'Listing photo' : `${esc(m.source)} listing photo`;
+  return m.link && /^https?:/.test(m.link)
+    ? `<a class="src-tag" href="${esc(m.link)}" target="_blank" rel="noopener" title="Open the listing">${label} ↗</a>`
+    : `<span class="src-tag" title="${esc(m.title)}">${label}</span>`;
+}
+
+// Buttons to open the product's Amazon / Walmart / eBay listings (to double-check).
+function listingLinks(key) {
+  const links = (S.links?.[key] || []).filter((l) => l.kind !== 'image');
+  if (!links.length) return '';
+  const name = { amazon: 'Amazon', walmart: 'Walmart', ebay: 'eBay', other: 'Listing' };
+  return `<div class="listing-links">${links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener">Check on ${name[l.kind] || 'listing'} ↗</a>`).join('')}</div>`;
 }
 
 function bar(g, r, total) {
@@ -269,6 +298,7 @@ function viewPack() {
         <div class="pack-name">${esc(line.name)}</div>
         <div class="qty ${line.qty > 1 ? 'multi' : ''}"><small>QTY</small><b>${line.qty}</b></div>
       </div>
+      ${listingLinks(line.key)}
       ${nextLine ? `<div class="next">Next in this order: ${esc(nextLine.name)} × ${nextLine.qty}</div>` : ''}
       <div class="pack-actions">
         <button class="b-undo" data-act="undo">↶ Back</button>
@@ -464,6 +494,7 @@ function viewSetup() {
 
   return `<div class="page">
     <h1>Setup</h1>
+    ${backOfficeCard()}
     <div class="card">
       <h2 style="margin-top:0">1. Import today's PDFs</h2>
       <label class="drop" id="drop">
@@ -499,6 +530,18 @@ function viewSetup() {
       <div class="grid">${shown.map((p) => `<div class="tile"><div class="pic" data-photo="${esc(p.key)}" data-name="${esc(p.name)}">${picHTML(p.key, p.name, { camera: false, showName: false })}</div>
         <div class="tile-body"><div class="tile-name">${esc(p.name)}</div><button class="btn small" data-photo="${esc(p.key)}" data-name="${esc(p.name)}">📷 ${img(p.key) ? 'Change photo' : 'Add photo'}</button></div></div>`).join('') || `<div class="muted">All products have photos 🎉</div>`}</div>
     </div>
+  </div>`;
+}
+
+function backOfficeCard() {
+  const jobs = S.photoJobs || { pending: 0, failed: {} };
+  const failed = allProducts().filter((p) => !img(p.key) && jobs.failed[p.key]);
+  return `<div class="card" style="margin-bottom:14px;border:2px solid var(--blue)">
+    <h2 style="margin-top:0">📤 Back office upload page</h2>
+    <p style="margin-top:0">The back-office team can upload the Packing Sheet, the Total Items list and the listing links file in one go at
+      <a href="/upload.html" target="_blank"><b>${esc(location.origin)}/upload.html</b></a>. The app then gets each product's photo from its Amazon / Walmart / eBay listing.</p>
+    <p>${jobs.pending ? `⏳ Getting ${jobs.pending} photo(s) from listing links…` : '✅ No photos waiting.'}
+      ${failed.length ? ` · <span style="color:var(--red);font-weight:700">${failed.length} couldn't be fetched</span> (see the upload page)` : ''}</p>
   </div>`;
 }
 
@@ -641,7 +684,8 @@ function photoDialog(key, name) {
   openModal(`<div class="dlg">
     <h3>${esc(name)}</h3>
     <div class="pic">${src ? `<img src="${esc(src)}" alt="">` : '<div class="noimg">No photo yet</div>'}</div>
-    ${src && S.imageMeta?.[key]?.source ? `<div class="muted" style="font-size:14px">From: ${esc(S.imageMeta[key].source)} ${esc(S.imageMeta[key].title || '')}</div>` : ''}
+    ${src && S.imageMeta?.[key]?.source ? `<div class="muted" style="font-size:14px;word-break:break-all">From: ${esc(S.imageMeta[key].source)} ${esc(S.imageMeta[key].title || '')}</div>` : ''}
+    ${listingLinks(key)}
     <div class="btns">
       <label class="btn primary" style="text-align:center">📷 Take photo<input type="file" accept="image/*" capture="environment" data-file hidden></label>
       <label class="btn" style="text-align:center">🖼 Choose picture<input type="file" accept="image/*" data-file hidden></label>
@@ -754,6 +798,7 @@ function go(view) {
 }
 
 document.addEventListener('click', (e) => {
+  if (e.target.closest('a')) return; // links (e.g. "open listing") never count as a tap on the photo
   const t = e.target.closest('[data-help],[data-split],[data-prefix],[data-accept],[data-skip],[data-clearcatalog],[data-view],[data-go],[data-packer],[data-switch],[data-photo],[data-mark],[data-act],[data-stock],[data-stock-undo],[data-need],[data-walk],[data-sfilter],[data-ofilter],[data-pfilter],[data-order],[data-copy],[data-share],[data-newday],[data-savepackers]');
   if (!t || t.closest('#modal')) return;
   const d = t.dataset;

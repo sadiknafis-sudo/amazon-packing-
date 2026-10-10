@@ -7,13 +7,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePdf } from './lib/parse.js';
 import { Store } from './lib/store.js';
-import { parseReport, imageFromListingHtml } from './lib/catalog.js';
+import crypto from 'node:crypto';
+import { parseReport, parseSpreadsheet } from './lib/catalog.js';
+import { fetchListingImage, classifyUrl, SOURCE_NAME } from './lib/listing.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const MAX_BODY = 25 * 1024 * 1024;
+// Optional PIN for the whole app — set it when the back office reaches the
+// app over the internet: ACCESS_PIN=1234 npm start
+const ACCESS_PIN = process.env.ACCESS_PIN || '';
+const PIN_TOKEN = ACCESS_PIN && crypto.createHash('sha256').update('packing:' + ACCESS_PIN).digest('hex');
 
 const store = new Store(DATA_DIR);
 
@@ -66,6 +72,19 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   try {
+    if (req.method === 'POST' && p === '/api/login') {
+      const { pin } = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      if (!ACCESS_PIN || String(pin) === ACCESS_PIN) {
+        res.setHeader('Set-Cookie', `pin=${PIN_TOKEN}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax`);
+        return send(res, 200, { ok: true });
+      }
+      return send(res, 401, { error: 'Wrong PIN' });
+    }
+    if (ACCESS_PIN && (p.startsWith('/api/') || p.startsWith('/images/'))) {
+      const cookie = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith('pin='));
+      if (!cookie || cookie.slice(4) !== PIN_TOKEN) return send(res, 401, { error: 'PIN required', pin: true });
+    }
+
     if (req.method === 'GET' && p === '/api/state') return send(res, 200, store.state);
 
     if (req.method === 'GET' && p === '/api/events') {
@@ -117,6 +136,31 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, store.addToCatalog(report, filename));
     }
 
+    if (req.method === 'POST' && p === '/api/upload') {
+      // Back-office upload: packing sheets, total list, links files and
+      // listing reports in any mix — each file is recognised automatically.
+      const buf = await readBody(req);
+      const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
+      if (buf.subarray(0, 5).toString() === '%PDF-') {
+        let parsed;
+        try {
+          parsed = await parsePdf(buf);
+        } catch {
+          return send(res, 400, { error: `Could not read ${filename} as a PDF` });
+        }
+        if (parsed.type === 'unknown') return send(res, 400, { error: `${filename}: not a "Packing Sheet" or "Total Items Pick List" PDF` });
+        return send(res, 200, { kind: parsed.type, ...store.importParsed(parsed, filename) });
+      }
+      let sheet;
+      try {
+        sheet = await parseSpreadsheet(buf, filename);
+      } catch (e) {
+        return send(res, 400, { error: e.message });
+      }
+      if (sheet.kind === 'links') return send(res, 200, { kind: 'links', ...store.importLinks(sheet.rows, filename) });
+      return send(res, 200, { kind: 'catalog', ...store.addToCatalog(sheet.report, filename) });
+    }
+
     if (req.method === 'GET' && p === '/api/suggestions') return send(res, 200, store.suggestions());
 
     if (req.method === 'POST' && p === '/api/listing-photo') {
@@ -125,28 +169,15 @@ const server = http.createServer(async (req, res) => {
       if (!key || !/^https?:\/\//i.test(link || '')) return send(res, 400, { error: 'Paste a full link starting with https://' });
       let image;
       try {
-        const r = await fetch(link, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-            'Accept-Language': 'en-CA,en;q=0.9',
-            Accept: 'text/html,application/xhtml+xml,image/*;q=0.9,*/*;q=0.8',
-          },
-          redirect: 'follow',
-          signal: AbortSignal.timeout(15000),
-        });
-        const type = r.headers.get('content-type') || '';
-        if (type.startsWith('image/')) image = r.url;
-        else if (r.ok) image = imageFromListingHtml(await r.text());
-      } catch {
-        // fall through to the error below
-      }
-      if (!image)
+        image = await fetchListingImage(link);
+      } catch (e) {
         return send(res, 400, {
-          error: 'Could not get the photo from that page (the site may have blocked it). Open the listing, long-press / right-click the main photo, choose "Copy image address" and paste that instead.',
+          error: `Could not get the photo from that page: ${e.message}. Open the listing, long-press / right-click the main photo, choose "Copy image address" and paste that instead.`,
         });
-      const host = new URL(link).hostname;
-      const source = /amazon/.test(host) ? 'Amazon' : /walmart/.test(host) ? 'Walmart' : /ebay/.test(host) ? 'eBay' : host;
-      store.act({ type: 'imageUrl', key, url: image, source, title: link });
+      }
+      const kind = classifyUrl(link);
+      store.state.links[key] = [...(store.state.links[key] || []).filter((l) => l.url !== link), { url: link, kind }];
+      store.act({ type: 'imageUrl', key, url: image, source: SOURCE_NAME[kind] || new URL(link).hostname, title: link, link });
       return send(res, 200, { ok: true, image });
     }
 

@@ -201,7 +201,7 @@ th { background: #f9fafb; font-size: 14px; color: var(--muted); }
 tr.click { cursor: pointer; }
 tr.click:hover td { background: #f9fafb; }
 
-.drop { border: 3px dashed #9ca3af; border-radius: 16px; padding: 30px 16px; text-align: center; background: var(--card); cursor: pointer; }
+.drop { display: block; border: 3px dashed #9ca3af; border-radius: 16px; padding: 30px 16px; text-align: center; background: var(--card); cursor: pointer; }
 .drop.over { border-color: var(--blue); background: var(--blue-bg); }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field input { padding: 10px 12px; border: 2px solid var(--line); border-radius: 10px; }
@@ -237,3 +237,8 @@ dialog::backdrop { background: rgba(0,0,0,.5); }
   main { overflow: visible; }
   .item { break-inside: avoid; border: 1px solid #ddd; }
 }
+
+.tab-link { color: #d1d5db; text-decoration: none; font-weight: 600; padding: 10px 14px; white-space: nowrap; }
+.listing-links { display: flex; gap: 8px; flex-wrap: wrap; }
+.listing-links a { background: #fff; border: 2px solid var(--line); border-radius: 10px; padding: 6px 12px; color: var(--ink); text-decoration: none; font-weight: 700; font-size: 15px; }
+a.src-tag { text-decoration: none; }

@@ -48,6 +48,50 @@ Use `PORT=8080 npm start` to change the port. All data is saved in the `data/` f
 4. **Pack**: each packer picks their name and packs.
 5. Next morning: **Setup → Start a new day** clears lists and progress. **Photos are kept.**
 
+## Back-office upload (packing sheet + total list + listing links)
+
+The back-office team can do the daily upload themselves at **`http://<server>:3000/upload.html`**
+(also linked from Setup). They drop everything at once:
+
+- the **Packing Sheet** PDF(s),
+- the **Total Items Pick List** PDF,
+- the **listing links file** (Excel or CSV).
+
+The app works out which file is which. There's a "Start a new day first" tick box to clear yesterday's orders.
+
+**Links file**: one row per product. The product name is written the same way as on the packing sheet,
+or you can give an order **Ref** instead (rows for a multi-item order go to its items in order).
+
+| Ref | Product | Amazon link | Walmart link | eBay link | Image link |
+|---|---|---|---|---|---|
+| | Dawn Orange 502ml | https://www.amazon.ca/dp/… | | | |
+| EB2 | | | | https://www.ebay.ca/itm/… | |
+
+- One link per product is enough, and any column can be empty. Links can be plain text or Excel hyperlinks. A product
+  name that is itself a hyperlink also works. A template is at `/links-template.csv`.
+- For each listing link, the server opens the page in the background and takes the **main photo**.
+  It tries eBay, then Walmart, then Amazon. An **Image link** (the photo's own address) is used directly and
+  never fails, so use it for products where a site blocks the page.
+- If the item names inside the packing-sheet PDF are clickable links, those are used too.
+- Links are remembered, so after the first upload the team only needs to send new or changed products. If a
+  product's link changes, its photo is fetched again.
+- The upload page lists products whose photo couldn't be fetched (with the reason and a Retry button)
+  and products that have no link yet. **"Download today's products that still need a link"** gives a
+  ready-made CSV to fill in and upload again.
+- On the pack screen, the photo tag (for example "Amazon listing photo ↗") and the **Check on Amazon/Walmart/eBay**
+  buttons open the listing, so packers can double-check the product.
+
+### If the back office is not in the warehouse
+
+The app runs on the warehouse computer, so people outside the warehouse need a way to reach it:
+
+- **Tailscale** (recommended, free for small teams): install it on the warehouse computer and on the
+  back-office computers. They can then open `http://<warehouse-computer-name>:3000/upload.html` from anywhere,
+  and nobody else can reach it.
+- Or host the app on a small cloud server, or use a tunnel such as Cloudflare Tunnel. **If the app can
+  be reached from the internet, start it with a PIN:** `ACCESS_PIN=1234 npm start`. Every device then asks for
+  the PIN once.
+
 ## Product photos (real Amazon / Walmart / eBay listing photos)
 
 The packing PDFs have no pictures, so the app gets them from your marketplace listings. Photos are
@@ -100,12 +144,14 @@ collide.
 ## Development
 
 ```bash
-npm test   # store, matching and report tests
+npm test   # store, matching, report and links tests
 ```
 
-- `server.js`: HTTP server, live updates (Server-Sent Events), PDF import, photo upload
+- `server.js`: HTTP server, live updates (Server-Sent Events), uploads, optional PIN
+- `public/upload.html`: back-office upload page
+- `lib/listing.js`: recognises Amazon / Walmart / eBay links and takes the main photo from a listing page
 - `lib/parse.js`: reads the Packing Sheet / Total Items Pick List PDFs (handles wrapped names and
   multi-item orders)
-- `lib/catalog.js`: reads marketplace listing reports (CSV/TSV/XLSX) and matches listing titles to products
+- `lib/catalog.js`: reads links files and marketplace listing reports (CSV/TSV/XLSX, including Excel hyperlinks) and matches titles to products
 - `lib/store.js`: shared state and actions (dividing and claiming orders, marking items, stock, photos, undo)
 - `public/`: the front end (plain HTML/CSS/JS, no build step)
