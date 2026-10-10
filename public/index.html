@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <title>Packing</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav id="tabs">
+    <button data-view="pack">📦 Pack</button>
+    <button data-view="stock">🌅 Stock check</button>
+    <button data-view="shop">🛒 Shopping list <span id="shopBadge" class="badge" hidden></span></button>
+    <button data-view="summary">📊 Summary</button>
+    <button data-view="setup">⚙️ Setup</button>
+    <span id="conn" title="Live connection"></span>
+  </nav>
+  <main id="view"></main>
+  <div id="flash" hidden></div>
+  <div id="toast" hidden></div>
+  <dialog id="modal"></dialog>
+  <script src="app.js"></script>
+</body>
+</html>
