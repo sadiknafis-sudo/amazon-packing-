@@ -144,9 +144,10 @@ Summary (with progress per account). The accounts come from the Ref letters:
 | WE | Weston USA Amazon |
 | P | Purenest Amazon |
 | SP | Shopify CDI |
+| WS | Walmart USA (CDI) |
 
 Change names and colours, or add new letters, in **Setup → Accounts**. Letters without a name show as, for example,
-"WS (no account name)".
+"XY (no account name)".
 
 ## Dividing orders between the two packers
 

@@ -127,6 +127,7 @@ test('accounts: defaults by Ref letters, editable, edits survive a restart', () 
   const s = new Store(dir);
   assert.equal(s.state.accounts.M.name, 'Mehmet USA Amazon');
   assert.equal(s.state.accounts.EB.name, 'eBay');
+  assert.equal(s.state.accounts.WS.name, 'Walmart USA (CDI)');
   s.act({ type: 'account', prefix: 'ws', name: 'Walmart Store', color: '#334155' });
   s.act({ type: 'account', prefix: 'P', name: 'PureNest', color: '#a16207' });
   const again = new Store(dir);
