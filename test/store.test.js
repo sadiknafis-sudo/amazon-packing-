@@ -75,3 +75,49 @@ test('new day clears lists but keeps photos', () => {
   assert.equal(s.state.day.orders.length, 0);
   assert.equal(s.state.images['dawn orange 502ml'], 'https://example.com/a.jpg');
 });
+
+test('half and half: each packer takes their own share, then can help', () => {
+  const s = freshStore();
+  s.act({ type: 'split', mode: 'half' });
+  const owners = s.state.day.orders.map((o) => o.assigned);
+  assert.ok(owners.includes(0) && owners.includes(1));
+  s.act({ type: 'claim', packer: 1 });
+  assert.equal(s.state.day.orders.find((o) => o.claimedBy === 1).assigned, 1);
+});
+
+test('by order type: Ref letters decide the packer, others go to either', () => {
+  const s = freshStore();
+  s.importParsed({ type: 'sheet', orders: [{ ref: 'EB9', recipient: 'X', lines: [{ name: 'Fritos Corn Chips 340g', qty: 1 }] }] }, 'b.pdf');
+  s.act({ type: 'split', mode: 'prefix', prefix: 'EB', to: 1 });
+  assert.equal(order(s, 'EB9').assigned, 1);
+  assert.equal(order(s, 'A1').assigned, null);
+  // Packer 0 never gets EB orders on their own...
+  for (let i = 0; i < 4; i++) {
+    const o = s.claimNext(0);
+    if (o) for (const l of o.lines) s.act({ type: 'mark', id: l.id, status: 'packed', packer: 0 });
+  }
+  assert.equal(order(s, 'EB9').claimedBy, null);
+  // ...unless they choose to help.
+  s.act({ type: 'claim', packer: 0, help: true });
+  assert.equal(order(s, 'EB9').claimedBy, 0);
+});
+
+test('listing reports set photos for exact name matches only', () => {
+  const s = freshStore();
+  const res = s.addToCatalog(
+    {
+      source: 'Amazon',
+      rows: 2,
+      columns: {},
+      items: [
+        { title: 'Dawn Orange 502ml', key: itemKey('Dawn Orange 502ml'), image: 'https://x/dawn.jpg', source: 'Amazon' },
+        { title: 'Kraft Dinner KD Shaker 500 g', key: itemKey('Kraft Dinner KD Shaker 500 g'), image: 'https://x/kd.jpg', source: 'Amazon' },
+      ],
+    },
+    'r.txt'
+  );
+  assert.equal(res.photos, 1);
+  assert.equal(s.state.images[itemKey('Dawn Orange 502ml')], 'https://x/dawn.jpg');
+  assert.equal(s.state.images[itemKey('KD Shaker 500g')], undefined);
+  assert.equal(s.suggestions()[0].candidates[0].image, 'https://x/kd.jpg');
+});

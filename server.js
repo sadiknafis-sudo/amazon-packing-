@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePdf } from './lib/parse.js';
 import { Store } from './lib/store.js';
+import { parseReport, imageFromListingHtml } from './lib/catalog.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -102,6 +103,51 @@ const server = http.createServer(async (req, res) => {
       if (parsed.type === 'unknown')
         return send(res, 400, { error: `${filename}: not a "Packing Sheet" or "Total Items Pick List" PDF` });
       return send(res, 200, store.importParsed(parsed, filename));
+    }
+
+    if (req.method === 'POST' && p === '/api/catalog') {
+      const buf = await readBody(req);
+      const filename = decodeURIComponent(req.headers['x-filename'] || 'report.csv');
+      let report;
+      try {
+        report = await parseReport(buf, filename);
+      } catch (e) {
+        return send(res, 400, { error: e.message });
+      }
+      return send(res, 200, store.addToCatalog(report, filename));
+    }
+
+    if (req.method === 'GET' && p === '/api/suggestions') return send(res, 200, store.suggestions());
+
+    if (req.method === 'POST' && p === '/api/listing-photo') {
+      // Paste an Amazon / Walmart / eBay listing link -> use its main photo.
+      const { key, url: link } = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      if (!key || !/^https?:\/\//i.test(link || '')) return send(res, 400, { error: 'Paste a full link starting with https://' });
+      let image;
+      try {
+        const r = await fetch(link, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+            'Accept-Language': 'en-CA,en;q=0.9',
+            Accept: 'text/html,application/xhtml+xml,image/*;q=0.9,*/*;q=0.8',
+          },
+          redirect: 'follow',
+          signal: AbortSignal.timeout(15000),
+        });
+        const type = r.headers.get('content-type') || '';
+        if (type.startsWith('image/')) image = r.url;
+        else if (r.ok) image = imageFromListingHtml(await r.text());
+      } catch {
+        // fall through to the error below
+      }
+      if (!image)
+        return send(res, 400, {
+          error: 'Could not get the photo from that page (the site may have blocked it). Open the listing, long-press / right-click the main photo, choose "Copy image address" and paste that instead.',
+        });
+      const host = new URL(link).hostname;
+      const source = /amazon/.test(host) ? 'Amazon' : /walmart/.test(host) ? 'Walmart' : /ebay/.test(host) ? 'eBay' : host;
+      store.act({ type: 'imageUrl', key, url: image, source, title: link });
+      return send(res, 200, { ok: true, image });
     }
 
     if (req.method === 'POST' && p === '/api/image') {

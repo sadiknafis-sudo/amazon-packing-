@@ -13,6 +13,9 @@ const ui = {
   orderFilter: 'all',
   photoFilter: 'none',
   claiming: false,
+  helping: false, // this packer finished their share and is helping the other
+  suggestions: null,
+  photoLog: [],
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -166,6 +169,12 @@ function picHTML(key, name, { camera = true, showName = true } = {}) {
   return inner + cam;
 }
 
+function sourceTag(key) {
+  const m = S.imageMeta?.[key];
+  if (!img(key) || !m || !m.source || m.source === 'Photo') return '';
+  return `<span class="src-tag" title="${esc(m.title)}">${esc(m.source)} listing photo</span>`;
+}
+
 function bar(g, r, total) {
   const pg = total ? (g / total) * 100 : 0;
   const pr = total ? (r / total) * 100 : 0;
@@ -206,13 +215,23 @@ function viewPack() {
   const st = packStats();
 
   if (!order) {
-    const free = day().orders.some((o) => o.claimedBy == null && isOpen(o));
-    if (free) {
+    const claimable = (o) => o.claimedBy == null && isOpen(o) && (o.assigned == null || o.assigned === me || ui.helping);
+    if (day().orders.some(claimable)) {
       if (!ui.claiming) {
         ui.claiming = true;
-        act({ type: 'claim' }).finally(() => (ui.claiming = false));
+        act({ type: 'claim', help: ui.helping }).finally(() => (ui.claiming = false));
       }
       return `<div class="page empty"><div class="big">⏳</div><h1>Getting next order…</h1></div>`;
+    }
+    const othersLeft = day().orders.filter((o) => o.claimedBy == null && isOpen(o) && o.assigned === 1 - me).length;
+    if (othersLeft) {
+      return `<div class="page"><div class="card empty"><div class="big">💪</div>
+        <h1>Your orders are done!</h1>
+        <p class="muted">${esc(packerName(1 - me))} still has ${othersLeft} order(s) not started.</p>
+        <p><button class="btn green" data-help style="font-size:22px;padding:18px 28px">Help ${esc(packerName(1 - me))}</button></p>
+        <p class="muted" style="font-size:14px">You'll take their orders from the end of the list, so you won't bump into each other.</p>
+        <p><button class="btn" data-go="summary">See summary</button> <button class="btn" data-switch>Switch packer</button></p>
+      </div></div>`;
     }
     const other = day().orders.filter((o) => o.claimedBy != null && o.claimedBy !== me && isOpen(o)).length;
     const boughtWaiting = shoppingList().filter((x) => x.status === 'bought' && x.orders.length);
@@ -237,13 +256,14 @@ function viewPack() {
   return `<div class="pack">
     <div class="pack-top">
       <button class="who" data-switch>👤 ${esc(packerName(me))} ▾</button>
+      ${order.assigned != null && order.assigned !== me ? `<span class="status-tag working">Helping ${esc(packerName(order.assigned))}</span>` : ''}
       <div><div class="order-ref">${esc(order.ref)}</div><div class="order-to">${esc(order.recipient)}</div></div>
       ${order.lines.length > 1 ? `<div><div class="muted" style="font-size:14px">Item ${idx + 1} of ${order.lines.length}</div><div class="dots">${order.lines.map((l, i) => `<span class="dot ${l.status || (i === idx ? 'cur' : '')}"></span>`).join('')}</div></div>` : ''}
       <div class="spacer"></div>
       <div class="progress"><div class="muted" style="font-size:14px">${st.done + st.waiting} / ${st.orders} orders done</div>${bar(st.done, st.waiting, st.orders)}</div>
     </div>
     <div class="banner-wrap">${banners.join('')}</div>
-    <div class="pic" data-mark="packed" data-id="${esc(line.id)}">${picHTML(line.key, line.name)}<span class="tap-hint">Tap photo = packed ✓</span></div>
+    <div class="pic" data-mark="packed" data-id="${esc(line.id)}">${picHTML(line.key, line.name)}${sourceTag(line.key)}<span class="tap-hint">Tap photo = packed ✓</span></div>
     <div class="pack-side">
       <div class="pack-info">
         <div class="pack-name">${esc(line.name)}</div>
@@ -402,7 +422,9 @@ function viewSummary() {
     <h2>Packers</h2>
     <div class="stats">${[0, 1].map((i) => `<div class="stat"><div style="font-weight:800;font-size:20px">${esc(packerName(i))}</div>
       <div><span style="color:var(--green);font-weight:800">${st.per[i].packed}</span> items packed · <span style="color:var(--red);font-weight:800">${st.per[i].missing}</span> missing · ${st.per[i].orders} orders finished</div>
+      ${S.split.mode !== 'shared' ? `<div>${day().orders.filter((o) => o.assigned === i).length} orders assigned · ${day().orders.filter((o) => o.assigned === i && isOpen(o)).length} left</div>` : ''}
       <div class="muted" style="font-size:14px">${(() => { const o = day().orders.find((x) => x.claimedBy === i && isOpen(x)); return o ? `Now on ${esc(o.ref)}` : 'Idle'; })()}</div></div>`).join('')}</div>
+    <p class="muted">Orders are divided: <b>${splitLabel()}</b> (change in Setup).</p>
     <h2>Orders</h2>
     <div class="chips">${chip('all', 'All')}${chip('open', 'Not started')}${chip('working', 'Packing')}${chip('missing', 'Missing item')}${chip('packed', 'Packed')}</div>
     <table><thead><tr><th>Ref</th><th>Recipient</th><th>Items</th><th>Status</th></tr></thead><tbody>
@@ -457,7 +479,7 @@ function viewSetup() {
     </div>
 
     <div class="card" style="margin-top:14px">
-      <h2 style="margin-top:0">2. Packers</h2>
+      <h2 style="margin-top:0">2. Packer names</h2>
       <div class="row">
         <label class="field">Packer 1 name<input id="p0" value="${esc(S.packers[0])}"></label>
         <label class="field">Packer 2 name<input id="p1" value="${esc(S.packers[1])}"></label>
@@ -466,14 +488,131 @@ function viewSetup() {
       <p>This device is: <b>${ui.packer == null ? 'not set' : esc(packerName(ui.packer))}</b> <button class="btn small" data-switch>Change</button></p>
     </div>
 
+    ${splitSection()}
+
+    ${photoReportSection()}
+
     <div class="card" style="margin-top:14px">
-      <h2 style="margin-top:0">3. Product photos <span class="muted" style="font-size:16px">${withImg} of ${products.length} have a photo</span></h2>
-      <p class="muted">Photos are saved by product name and remembered for future days. Take a photo of the item with the tablet, upload one, or paste an image link.</p>
+      <h2 style="margin-top:0">5. All product photos <span class="muted" style="font-size:16px">${withImg} of ${products.length} have a photo</span></h2>
+      <p class="muted">Photos are saved by product name and remembered for future days. Tap a product to add or change its photo: paste its Amazon / Walmart / eBay listing link, paste an image link, or take a photo.</p>
       <div class="chips">${chip('none', 'Missing a photo')}${chip('all', 'All products')}</div>
       <div class="grid">${shown.map((p) => `<div class="tile"><div class="pic" data-photo="${esc(p.key)}" data-name="${esc(p.name)}">${picHTML(p.key, p.name, { camera: false, showName: false })}</div>
         <div class="tile-body"><div class="tile-name">${esc(p.name)}</div><button class="btn small" data-photo="${esc(p.key)}" data-name="${esc(p.name)}">📷 ${img(p.key) ? 'Change photo' : 'Add photo'}</button></div></div>`).join('') || `<div class="muted">All products have photos 🎉</div>`}</div>
     </div>
   </div>`;
+}
+
+function splitLabel() {
+  return { shared: 'shared list — whoever is free takes the next order', half: 'first half / second half', prefix: 'by order type (Ref letters)' }[S.split.mode];
+}
+
+function prefixCounts() {
+  const m = new Map();
+  for (const o of day().orders) {
+    const p = (o.ref.match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
+    m.set(p, (m.get(p) || 0) + 1);
+  }
+  return [...m];
+}
+
+function splitSection() {
+  const mode = S.split.mode;
+  const opt = (m, title, text) => `<button class="split-opt ${mode === m ? 'on' : ''}" data-split="${m}"><b>${title}</b><span>${text}</span></button>`;
+  const orders = day().orders;
+  const count = (i) => orders.filter((o) => o.assigned === i).length;
+  const units = (i) => orders.filter((o) => o.assigned === i).reduce((a, o) => a + o.lines.reduce((b, l) => b + l.qty, 0), 0);
+  let detail = '';
+  if (mode === 'half' && orders.length) {
+    const first = orders.filter((o) => o.assigned === 0);
+    const second = orders.filter((o) => o.assigned === 1);
+    detail = `<div class="stats" style="margin-top:12px">${[0, 1].map((i) => { const list = i ? second : first; return `<div class="stat"><div style="font-weight:800">${esc(packerName(i))}</div>${list.length ? `${esc(list[0].ref)} → ${esc(list[list.length - 1].ref)}` : '—'}<div class="muted">${count(i)} orders · ${units(i)} units</div></div>`; }).join('')}</div>`;
+  }
+  if (mode === 'prefix') {
+    const pref = S.split.prefixes;
+    detail = `<p class="muted">Tap who packs each type of order. "Either" = whoever is free.</p>
+      <table><thead><tr><th>Ref starts with</th><th>Orders</th><th>Packed by</th></tr></thead><tbody>
+      ${prefixCounts().map(([p, n]) => `<tr><td><b>${esc(p)}</b> <span class="muted">e.g. ${esc(orders.find((o) => o.ref.toUpperCase().startsWith(p) && /^\d/.test(o.ref.slice(p.length)))?.ref || '')}</span></td><td>${n}</td><td><div class="row">
+        ${[0, 1, null].map((to) => `<button class="chip ${pref[p] === to || (to === null && pref[p] == null) ? 'on' : ''}" data-prefix="${esc(p)}" data-to="${to}">${to === null ? 'Either' : esc(packerName(to))}</button>`).join('')}
+      </div></td></tr>`).join('') || '<tr><td colspan="3" class="muted">Import a packing sheet first.</td></tr>'}
+      </tbody></table>
+      ${orders.length ? `<p>${esc(packerName(0))}: <b>${count(0)}</b> orders · ${esc(packerName(1))}: <b>${count(1)}</b> orders · Either: <b>${orders.filter((o) => o.assigned == null).length}</b></p>` : ''}`;
+  }
+  return `<div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0">3. How to divide orders between the packers</h2>
+    <div class="split-opts">
+      ${opt('shared', '🔁 Shared list', 'Both work down the same list. Whoever is free takes the next order. Nobody waits, nobody gets the same order.')}
+      ${opt('half', '✂️ Half and half', `${esc(packerName(0))} gets the first half of the sheet, ${esc(packerName(1))} the second half (balanced by number of units).`)}
+      ${opt('prefix', '🏷 By order type', 'Choose by the Ref letters, e.g. EB orders to one packer, WS orders to the other.')}
+    </div>
+    ${detail}
+    ${mode !== 'shared' ? `<p class="muted" style="font-size:14px">When a packer finishes their share, they get a "Help" button to take the other packer's remaining orders.</p>` : ''}
+  </div>`;
+}
+
+function photoReportSection() {
+  const info = S.catalogInfo || { count: 0, sources: {} };
+  const sug = ui.suggestions;
+  return `<div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0">4. Listing photos from Amazon / Walmart / eBay</h2>
+    <p class="muted" style="margin-top:0">Import your listing reports once. The app keeps them, and every product on today's and future packing sheets gets the real listing photo.</p>
+    <details style="margin-bottom:12px"><summary><b>Which report to download?</b></summary>
+      <ul>
+        <li><b>Amazon</b> Seller Central → Inventory → Inventory Reports → <i>All Listings Report</i> (has <code>item-name</code> and <code>image-url</code>). The <i>Category Listings Report</i> (<code>main-image-url</code>) works too.</li>
+        <li><b>Walmart</b> Seller Center → Items → Download → <i>Item report</i> (needs the product name and primary image URL columns).</li>
+        <li><b>eBay</b> Seller Hub → Reports → Downloads → active listings report, or a File Exchange / bulk listing export with picture URLs.</li>
+        <li>Anything else: any CSV / Excel file with a product title column and an image link column.</li>
+      </ul>
+      <p class="muted">Excel (.xlsx), CSV and tab-separated .txt files all work.</p>
+    </details>
+    <label class="drop" id="dropReport">
+      <input type="file" id="reportInput" accept=".csv,.tsv,.txt,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>
+      <div style="font-size:36px">🖼</div>
+      <b>Tap to choose listing reports, or drop them here</b>
+    </label>
+    <div style="margin-top:10px">${ui.photoLog.join('<br>')}</div>
+    <p>Saved listings: <b>${info.count}</b> ${Object.entries(info.sources).map(([k, v]) => `· ${esc(k)} ${v}`).join(' ')}
+      ${info.count ? `<button class="btn small" data-clearcatalog>Clear saved listings</button>` : ''}</p>
+    <h3>Check suggested photos ${sug ? `(${sug.length})` : ''}</h3>
+    <p class="muted" style="margin-top:0">Names that match a listing exactly get the photo automatically. For close matches, check it's the same product, flavour and size, then tap the right photo.</p>
+    ${sug == null ? '<p class="muted">Loading…</p>' : sug.length ? `<div class="list">${sug.map(suggestionRow).join('')}</div>` : `<p class="muted">Nothing to check.</p>`}
+  </div>`;
+}
+
+function suggestionRow(p) {
+  return `<div class="card sug">
+    <div class="name" style="font-size:18px">${esc(p.name)}</div>
+    <div class="sug-cands">${p.candidates.map((c, i) => `<button class="sug-cand" data-accept="${esc(p.key)}" data-idx="${i}">
+      <img src="${esc(c.image)}" alt="" loading="lazy"><span class="sug-title">${esc(c.title)}</span>
+      <span class="muted" style="font-size:13px">${esc(c.source)} · ${Math.round(c.score * 100)}% match</span>
+      ${c.score < 0.9 ? '<span class="sug-warn">⚠ Check flavour / size</span>' : ''}<span class="btn small green">✓ This one</span></button>`).join('')}
+      <button class="sug-cand none" data-skip="${esc(p.key)}"><span style="font-size:30px">✗</span><span>None of these</span></button>
+    </div></div>`;
+}
+
+async function loadSuggestions() {
+  try {
+    ui.suggestions = await (await fetch('/api/suggestions')).json();
+  } catch {
+    ui.suggestions = [];
+  }
+  ui.suggestions = ui.suggestions.filter((p) => !(ui.skipped || new Set()).has(p.key));
+  if (ui.view === 'setup') render();
+}
+
+async function importReports(files) {
+  ui.photoLog = [];
+  for (const f of files) {
+    try {
+      const r = await fetch('/api/catalog', { method: 'POST', headers: { 'X-Filename': encodeURIComponent(f.name) }, body: f });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error);
+      ui.photoLog.push(`✅ ${esc(f.name)} (${esc(j.source)}): ${j.withImage} listings with photos (titles from "${esc(j.columns.title)}", photos from "${esc(j.columns.image)}") · ${j.photos} product photo(s) set automatically`);
+    } catch (e) {
+      ui.photoLog.push(`❌ ${esc(e.message || f.name)}`);
+    }
+    render();
+  }
+  loadSuggestions();
 }
 
 async function importFiles(files) {
@@ -491,6 +630,7 @@ async function importFiles(files) {
     if (out) out.innerHTML = lines.join('<br>');
   }
   toast('Import finished');
+  loadSuggestions();
 }
 
 // ---------------------------------------------------------------------------
@@ -501,12 +641,18 @@ function photoDialog(key, name) {
   openModal(`<div class="dlg">
     <h3>${esc(name)}</h3>
     <div class="pic">${src ? `<img src="${esc(src)}" alt="">` : '<div class="noimg">No photo yet</div>'}</div>
+    ${src && S.imageMeta?.[key]?.source ? `<div class="muted" style="font-size:14px">From: ${esc(S.imageMeta[key].source)} ${esc(S.imageMeta[key].title || '')}</div>` : ''}
     <div class="btns">
       <label class="btn primary" style="text-align:center">📷 Take photo<input type="file" accept="image/*" capture="environment" data-file hidden></label>
       <label class="btn" style="text-align:center">🖼 Choose picture<input type="file" accept="image/*" data-file hidden></label>
-      <a class="btn full" style="text-align:center;text-decoration:none" target="_blank" rel="noopener" href="https://www.google.com/search?tbm=isch&q=${encodeURIComponent(name)}">🔎 Find it on Google Images (then save &amp; choose it, or copy the image link)</a>
-      <input class="search full" id="imgUrl" placeholder="…or paste an image link (https://…)">
-      <button class="btn" data-dlg="url">Save link</button>
+      <input class="search full" id="listingUrl" placeholder="Paste the Amazon / Walmart / eBay listing link">
+      <button class="btn blue full" data-dlg="listing">Use the listing's photo</button>
+      <div class="full row" style="gap:6px">Find the listing:
+        ${[['Amazon', 'https://www.amazon.ca/s?k='], ['Walmart', 'https://www.walmart.ca/search?q='], ['eBay', 'https://www.ebay.ca/sch/i.html?_nkw='], ['Google Images', 'https://www.google.com/search?tbm=isch&q=']]
+          .map(([n, u]) => `<a class="btn small" style="text-decoration:none" target="_blank" rel="noopener" href="${u}${encodeURIComponent(name)}">🔎 ${n}</a>`).join('')}
+      </div>
+      <input class="search full" id="imgUrl" placeholder="…or paste an image address (right-click / long-press the photo → Copy image address)">
+      <button class="btn" data-dlg="url">Save image address</button>
       ${src ? `<button class="btn red" data-dlg="remove">Remove photo</button>` : '<span></span>'}
       <button class="btn full" data-close>Close</button>
     </div>
@@ -518,6 +664,21 @@ function photoDialog(key, name) {
       act({ type: 'imageUrl', key, url });
     }
     if (btn.dataset.dlg === 'remove') act({ type: 'imageUrl', key, url: null });
+    if (btn.dataset.dlg === 'listing') {
+      const url = $('#listingUrl').value.trim();
+      if (!url) return false;
+      $('#photoStatus').textContent = 'Getting the photo from the listing…';
+      fetch('/api/listing-photo', { method: 'POST', body: JSON.stringify({ key, url }) })
+        .then(async (r) => {
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error);
+          closeModal();
+          toast('Listing photo saved');
+          loadSuggestions();
+        })
+        .catch((e) => ($('#photoStatus').textContent = e.message));
+      return false;
+    }
   });
   $('#modal').querySelectorAll('[data-file]').forEach((inp) =>
     inp.addEventListener('change', async () => {
@@ -586,16 +747,39 @@ $('#modal').addEventListener('click', (e) => {
 // Events
 // ---------------------------------------------------------------------------
 function go(view) {
+  if (view === 'setup' && ui.view !== 'setup') loadSuggestions();
   ui.view = view;
   localStorage.setItem('view', view);
   render();
 }
 
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-view],[data-go],[data-packer],[data-switch],[data-photo],[data-mark],[data-act],[data-stock],[data-stock-undo],[data-need],[data-walk],[data-sfilter],[data-ofilter],[data-pfilter],[data-order],[data-copy],[data-share],[data-newday],[data-savepackers]');
+  const t = e.target.closest('[data-help],[data-split],[data-prefix],[data-accept],[data-skip],[data-clearcatalog],[data-view],[data-go],[data-packer],[data-switch],[data-photo],[data-mark],[data-act],[data-stock],[data-stock-undo],[data-need],[data-walk],[data-sfilter],[data-ofilter],[data-pfilter],[data-order],[data-copy],[data-share],[data-newday],[data-savepackers]');
   if (!t || t.closest('#modal')) return;
   const d = t.dataset;
 
+  if (t.hasAttribute('data-help')) {
+    ui.helping = true;
+    return render();
+  }
+  if (d.split) return act({ type: 'split', mode: d.split });
+  if (d.prefix) return act({ type: 'split', mode: 'prefix', prefix: d.prefix, to: d.to === 'null' ? null : Number(d.to) });
+  if (d.accept) {
+    const p = ui.suggestions.find((x) => x.key === d.accept);
+    const c = p && p.candidates[Number(d.idx)];
+    if (!c) return;
+    ui.suggestions = ui.suggestions.filter((x) => x.key !== p.key);
+    return act({ type: 'imageUrl', key: p.key, url: c.image, source: c.source, title: c.title });
+  }
+  if (d.skip) {
+    (ui.skipped = ui.skipped || new Set()).add(d.skip);
+    ui.suggestions = ui.suggestions.filter((x) => x.key !== d.skip);
+    return render();
+  }
+  if (t.hasAttribute('data-clearcatalog')) {
+    if (confirm('Forget all imported listings? Photos already set on products are kept.')) act({ type: 'clearCatalog' }).then(loadSuggestions);
+    return;
+  }
   if (d.view) return go(d.view);
   if (d.go) return go(d.go);
   if (d.packer != null) {
@@ -604,6 +788,7 @@ document.addEventListener('click', (e) => {
     return go('pack');
   }
   if (t.hasAttribute('data-switch')) {
+    ui.helping = false;
     if (ui.packer != null) act({ type: 'release' });
     ui.packer = null;
     localStorage.removeItem('packer');
@@ -615,7 +800,7 @@ document.addEventListener('click', (e) => {
   }
   if (d.mark) {
     flash(d.mark === 'packed');
-    return act({ type: 'mark', id: d.id, status: d.mark });
+    return act({ type: 'mark', id: d.id, status: d.mark, help: ui.helping });
   }
   if (d.act) return act({ type: d.act });
   if (d.stock !== undefined && d.key) {
@@ -686,14 +871,17 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', (e) => {
   if (e.target.id === 'pdfInput' && e.target.files.length) importFiles([...e.target.files]);
+  if (e.target.id === 'reportInput' && e.target.files.length) importReports([...e.target.files]);
 });
 ['dragover', 'dragleave', 'drop'].forEach((type) =>
   document.addEventListener(type, (e) => {
-    const drop = e.target.closest && e.target.closest('#drop');
+    const drop = e.target.closest && e.target.closest('#drop, #dropReport');
     if (!drop) return;
     e.preventDefault();
     drop.classList.toggle('over', type === 'dragover');
-    if (type === 'drop') importFiles([...e.dataTransfer.files].filter((f) => /pdf$/i.test(f.name) || f.type === 'application/pdf'));
+    if (type !== 'drop') return;
+    if (drop.id === 'dropReport') importReports([...e.dataTransfer.files]);
+    else importFiles([...e.dataTransfer.files].filter((f) => /pdf$/i.test(f.name) || f.type === 'application/pdf'));
   })
 );
 
@@ -711,3 +899,4 @@ document.addEventListener('keydown', (e) => {
 });
 
 connect();
+if (ui.view === 'setup') loadSuggestions();
