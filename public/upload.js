@@ -2,7 +2,7 @@
 // Back-office page: upload today's PDFs + the listing links file, and see
 // which products still need a link or a photo.
 let S = null;
-const ui = { log: [], busy: false, newDay: null };
+const ui = { log: [], busy: false, newDay: null, incoming: null, matches: null, query: '' };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -38,6 +38,115 @@ function pinScreen(msg = '') {
   };
 }
 
+// ---------------------------------------------------------------------------
+// "Send to Packing App" bookmark: runs on an Amazon / Walmart / eBay listing
+// in the back office's own browser, picks up the main photo, title and link,
+// and opens this page to choose which product it is. Because it runs in their
+// browser, marketplaces can't block it the way they block the server.
+// ---------------------------------------------------------------------------
+function bookmarkletCode() {
+  const src = function (ORIGIN) {
+    var q = function (s) { return document.querySelector(s); };
+    var meta = function (p) { var e = q('meta[property="' + p + '"],meta[name="' + p + '"]'); return e && e.content; };
+    var img = null;
+    var li = q('#landingImage') || q('#imgTagWrapperId img') || q('#imgBlkFront');
+    if (li) {
+      try {
+        var dyn = JSON.parse(li.getAttribute('data-a-dynamic-image') || '{}');
+        var best = 0;
+        for (var u in dyn) if (dyn[u][0] * dyn[u][1] > best) { best = dyn[u][0] * dyn[u][1]; img = u; }
+      } catch (e) {}
+      img = li.getAttribute('data-old-hires') || img || li.src;
+    }
+    if (!img) { var eb = q('.ux-image-carousel-item.active img') || q('.ux-image-carousel-item img'); if (eb) img = eb.getAttribute('data-zoom-src') || eb.src; }
+    if (!img) { var wm = q('[data-testid="hero-image"] img') || q('img[data-testid="hero-image"]'); if (wm) img = wm.src; }
+    if (!img) img = meta('og:image') || meta('twitter:image');
+    if (!img) {
+      var big = 0;
+      [].forEach.call(document.images, function (i) { var a = i.naturalWidth * i.naturalHeight; if (a > big && /^https?:/.test(i.src)) { big = a; img = i.src; } });
+    }
+    var t = (q('#productTitle') || q('h1.x-item-title__mainTitle') || q('h1') || {}).innerText || meta('og:title') || document.title;
+    if (!img) { alert('Packing app: no product photo found on this page.'); return; }
+    var link = location.href.split('#')[0];
+    var asin = link.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/);
+    if (asin) link = location.origin + '/dp/' + asin[1];
+    else if (/ebay\./.test(location.hostname)) link = link.split('?')[0];
+    window.open(ORIGIN + '/upload.html#add=' + encodeURIComponent(JSON.stringify({ i: img, t: String(t).trim().slice(0, 300), u: link })), 'packingapp');
+  };
+  return `(${src.toString()})(${JSON.stringify(location.origin)})`;
+}
+
+function readIncoming() {
+  const m = location.hash.match(/^#add=(.+)$/);
+  if (!m) return;
+  try {
+    const d = JSON.parse(decodeURIComponent(m[1]));
+    ui.incoming = { image: d.i, title: d.t || '', link: d.u || '' };
+  } catch {
+    ui.incoming = null;
+  }
+  history.replaceState(null, '', location.pathname);
+  ui.matches = null;
+  ui.query = '';
+  fetch('/api/match?title=' + encodeURIComponent(ui.incoming?.title || ''))
+    .then((r) => r.json())
+    .then((list) => {
+      ui.matches = list;
+      render();
+    });
+}
+
+function incomingCard() {
+  const inc = ui.incoming;
+  const site = /amazon|amzn/.test(inc.link) ? 'Amazon' : /walmart/.test(inc.link) ? 'Walmart' : /ebay/.test(inc.link) ? 'eBay' : 'listing';
+  const q = ui.query.trim().toLowerCase();
+  const list = (ui.matches || []).filter((p) => !q || p.name.toLowerCase().includes(q));
+  const top = q ? list.slice(0, 30) : list.filter((p, i) => i < 5 || p.score >= 0.5).slice(0, 12);
+  return `<div class="card incoming">
+    <h1 style="margin-top:0">Which product is this ${site} listing?</h1>
+    <div class="incoming-grid">
+      <div class="pic"><img src="${esc(inc.image)}" alt=""></div>
+      <div>
+        <div style="font-weight:700;font-size:18px">${esc(inc.title)}</div>
+        <div class="muted" style="font-size:13px;word-break:break-all;margin:4px 0 12px">${esc(inc.link)}</div>
+        <input class="search" id="prodSearch" placeholder="Search today's products…" value="${esc(ui.query)}" style="width:100%">
+        <div class="list" style="margin-top:10px">
+          ${ui.matches == null ? '<p class="muted">Finding matches…</p>' : top.map((p) => `<button class="item pick" data-pick="${esc(p.key)}">
+            <div class="grow"><div class="name">${esc(p.name)}</div>
+            <div class="muted" style="font-size:13px">${p.score >= 0.3 ? `${Math.round(p.score * 100)}% match · ` : ''}${p.hasPhoto ? 'has a photo (will be replaced)' : 'no photo yet'}</div></div>
+            <span class="btn small green">✓ This one</span></button>`).join('') || '<p class="muted">No product found.</p>'}
+        </div>
+        <details style="margin-top:12px"><summary>Not on today's list? Save it for a future day</summary>
+          <div class="row" style="margin-top:8px"><input class="search" id="newName" placeholder="Product name exactly as on the packing sheet" value="${esc(inc.title)}">
+          <button class="btn primary" id="saveNew">Save</button></div></details>
+        <p><button class="btn" id="cancelIncoming">Cancel</button></p>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function saveIncoming(body) {
+  const r = await fetch('/api/action', { method: 'POST', body: JSON.stringify({ type: 'setListing', image: ui.incoming.image, link: ui.incoming.link, title: ui.incoming.title, ...body }) });
+  const j = await r.json();
+  if (!r.ok) return toast(j.error || 'Could not save');
+  ui.incoming = null;
+  render();
+  toast('Saved ✓ — go back to the marketplace tab for the next product');
+}
+
+function bookmarkletCard() {
+  return `<div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0">📌 Easiest way: the "Send to Packing App" button</h2>
+    <ol>
+      <li>On a computer, show the browser's bookmarks bar (Chrome/Edge: <b>Ctrl+Shift+B</b>, Mac: <b>⌘+Shift+B</b>).</li>
+      <li><b>Drag this button onto the bookmarks bar:</b> <a class="bookmarklet" id="bm" href="#">📌 Send to Packing App</a></li>
+      <li>Open a product's listing on Amazon, Walmart or eBay and click <b>📌 Send to Packing App</b> on the bookmarks bar.</li>
+      <li>This page opens with the listing's photo. Tap which product it is. Done. The photo and the listing link are saved.</li>
+    </ol>
+    <p class="muted">Use the list under "No link and no photo yet" below to see which products still need one. The button works on any site that shows a product photo.</p>
+  </div>`;
+}
+
 function products() {
   const map = new Map();
   for (const t of S.day.totals) map.set(t.key, { key: t.key, name: t.name, qty: t.qty });
@@ -65,6 +174,21 @@ function render() {
   const lastImport = d.files.length ? d.files[d.files.length - 1].at : 0;
   if (ui.newDay === null) ui.newDay = d.orders.length > 0 && Date.now() - lastImport > 12 * 3600 * 1000;
 
+  const bm = () => {
+    const a = $('#bm');
+    if (a) {
+      a.href = 'javascript:' + encodeURIComponent(bookmarkletCode());
+      a.onclick = (e) => {
+        e.preventDefault();
+        toast('Drag this button to your bookmarks bar, then click it on a listing page');
+      };
+    }
+  };
+  if (ui.incoming) {
+    $('#view').innerHTML = `<div class="page">${incomingCard()}</div>`;
+    return;
+  }
+  setTimeout(bm);
   $('#view').innerHTML = `<div class="page">
     <h1>Upload today's files</h1>
     <div class="card">
@@ -80,8 +204,10 @@ function render() {
       <div style="margin-top:10px">${ui.log.join('<br>')}</div>
     </div>
 
+    ${bookmarkletCard()}
+
     <div class="card" style="margin-top:14px">
-      <h2 style="margin-top:0">The links file</h2>
+      <h2 style="margin-top:0">Or: a links file for many products at once</h2>
       <p>One row per product with its listing links. The product name should be written the same way as on the packing sheet. You can also give an order <b>Ref</b> instead of the name.</p>
       <table><thead><tr><th>Ref</th><th>Product</th><th>Amazon link</th><th>Walmart link</th><th>eBay link</th><th>Image link</th></tr></thead>
         <tbody><tr><td></td><td>Dawn Orange 502ml</td><td>https://www.amazon.ca/dp/…</td><td></td><td></td><td></td></tr>
@@ -167,6 +293,21 @@ function downloadMissing() {
   a.click();
 }
 
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'prodSearch') {
+    ui.query = e.target.value;
+    const pos = e.target.selectionStart;
+    render();
+    const inp = $('#prodSearch');
+    inp.focus();
+    inp.setSelectionRange(pos, pos);
+  }
+});
+window.addEventListener('hashchange', () => {
+  readIncoming();
+  render();
+});
+
 document.addEventListener('change', (e) => {
   if (e.target.id === 'files') upload([...e.target.files]);
   if (e.target.id === 'newDay') ui.newDay = e.target.checked;
@@ -175,6 +316,15 @@ document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (!t) return;
   if (t.id === 'dlMissing') downloadMissing();
+  if (t.dataset.pick) saveIncoming({ key: t.dataset.pick });
+  if (t.id === 'saveNew') {
+    const name = $('#newName').value.trim();
+    if (name) saveIncoming({ name });
+  }
+  if (t.id === 'cancelIncoming') {
+    ui.incoming = null;
+    render();
+  }
   if (t.id === 'retryAll') fetch('/api/action', { method: 'POST', body: JSON.stringify({ type: 'retryAllPhotos' }) });
   if (t.dataset.retry) fetch('/api/action', { method: 'POST', body: JSON.stringify({ type: 'retryPhoto', key: t.dataset.retry }) });
 });
@@ -188,4 +338,5 @@ document.addEventListener('click', (e) => {
   })
 );
 
+readIncoming();
 start();

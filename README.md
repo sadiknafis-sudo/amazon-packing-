@@ -59,6 +59,14 @@ The back-office team can do the daily upload themselves at **`http://<server>:30
 
 The app works out which file is which. There's a "Start a new day first" tick box to clear yesterday's orders.
 
+**📌 "Send to Packing App" button (easiest and most reliable).** On the upload page, drag the orange
+**📌 Send to Packing App** button onto the browser's bookmarks bar (on a computer). Then, on any Amazon,
+Walmart or eBay listing, click it. The upload page opens showing the listing's main photo and title,
+with today's products ranked by how well they match. Tap the right product and the photo and listing
+link are saved. Because this runs in the back-office person's own browser, the marketplaces can't block
+it. On Amazon it picks the largest version of the main photo. Products not on today's list can be saved by
+name for a future day.
+
 **Links file**: one row per product. The product name is written the same way as on the packing sheet,
 or you can give an order **Ref** instead (rows for a multi-item order go to its items in order).
 

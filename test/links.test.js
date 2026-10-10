@@ -85,3 +85,17 @@ test('imported links are matched to products and their photos fetched in the bac
   assert.match(store.state.photoJobs.failed[itemKey('KD Shaker 500g')].errors[0], /503/);
   assert.equal(store.state.photoJobs.pending, 0);
 });
+
+test('"Send to Packing App": photo and link from the browser are saved for the chosen product', () => {
+  const store = new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'packing-')));
+  store.importParsed({ type: 'sheet', orders: [{ ref: 'WS5', recipient: 'A', lines: [{ name: 'Adams Peanut Butter Creamy 500g', qty: 1 }] }, { ref: 'C66', recipient: 'B', lines: [{ name: 'Adams Peanut Butter Crunchy 1kg', qty: 1 }] }] }, 's.pdf');
+  const ranked = store.matchProducts('Adams 100% Natural Peanut Butter, Creamy, 500g');
+  assert.equal(ranked[0].name, 'Adams Peanut Butter Creamy 500g');
+  store.act({ type: 'setListing', key: ranked[0].key, image: 'https://m.media-amazon.com/images/I/a.jpg', link: 'https://www.amazon.ca/dp/B0ABCDEFGH', title: 'Adams…' });
+  assert.equal(store.state.images[ranked[0].key], 'https://m.media-amazon.com/images/I/a.jpg');
+  assert.equal(store.state.imageMeta[ranked[0].key].source, 'Amazon');
+  assert.deepEqual(store.state.links[ranked[0].key], [{ url: 'https://www.amazon.ca/dp/B0ABCDEFGH', kind: 'amazon' }]);
+  // A product for a future day can be saved by name.
+  store.act({ type: 'setListing', name: 'Tostitos Scoops 215g', image: 'https://i.ebayimg.com/x.jpg', link: 'https://www.ebay.ca/itm/1' });
+  assert.equal(store.state.images[itemKey('Tostitos Scoops 215g')], 'https://i.ebayimg.com/x.jpg');
+});

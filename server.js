@@ -162,6 +162,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && p === '/api/suggestions') return send(res, 200, store.suggestions());
+    if (req.method === 'GET' && p === '/api/match') return send(res, 200, store.matchProducts(url.searchParams.get('title') || ''));
 
     if (req.method === 'POST' && p === '/api/listing-photo') {
       // Paste an Amazon / Walmart / eBay listing link -> use its main photo.
